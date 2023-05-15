@@ -1,0 +1,173 @@
+---
+title: "R Intro Spatial Stats"
+author: "Jakob Dambon"
+date: "2023-05-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# R Example
+
+The following simple R example is derived from the lecture notes of [STA330: Modeling Dependent Data](http://user.math.uzh.ch/furrer/download/sta330/script_sta330.pdf) by Prof. Reinhard Rurrer, University of Zurich.
+
+## Data
+
+```{r}
+library(fields)
+
+?ChicagoO3
+# 20 ozone measurements in 1987
+y <- ChicagoO3$y
+summary(y)
+```
+
+```{r}
+hist(y)
+```
+
+
+## Locations
+
+```{r}
+# First in Latitude and Longitude (good for visualization)
+summary(ChicagoO3$lon.lat)
+```
+
+
+```{r}
+# Now in approx Cartesian (in miles)
+summary(ChicagoO3$x)
+plot(ChicagoO3$x)
+```
+
+
+## Visualization of Data
+
+```{r}
+# combine data and locations
+library(sp)
+sp_ozone <- SpatialPointsDataFrame(
+  ChicagoO3$lon.lat, 
+  data.frame(ozone = ChicagoO3$y), 
+  # projections
+  proj4string = CRS("+proj=longlat +datum=WGS84")
+)
+
+str(sp_ozone)
+```
+
+```{r}
+# first plot. Note that the dimensions are not distorted
+spplot(sp_ozone, colorkey = TRUE)
+```
+
+
+```{r}
+# very powerful mapping tool (similar syntax to ggplot2)
+library(tmap)
+# interactive mode
+tmap_mode("view")
+
+tm_shape(sp_ozone) + 
+  tm_symbols(col = "ozone")
+```
+
+
+## Modeling using a Gaussian Process
+
+We need the following components:
+
+### Distance Matrix: 
+
+```{r}
+# using the Cartesian locations
+distmat <- as.matrix(dist(ChicagoO3$x))
+# distance matrix heat map. Note that the diagonal is left bottom to top right
+spam::image(distmat)
+```
+
+
+### Choice of a Covariance function
+
+```{r}
+x <- seq(0, 5, by = 0.1)
+l_cf <- list(
+  "exponential" = spam::cov.exp, 
+  "spherical" = spam::cov.sph, 
+  "Matern3/2" = spam::cov.mat32
+)
+
+matplot(
+  x, 
+  sapply(
+    l_cf, 
+    function(cf) 
+      # theta: 1 range, 2, variance, 3 nugget
+      do.call(cf, args = list(h = x, theta = c(1, 1, 0)))
+  ),
+  type = "l",
+  ylab = "c(d)",
+  xlab = "d",
+  main = "Some Covariance Functions"
+)
+legend(
+  "topright", 
+  legend = names(l_cf), 
+  col = seq_along(l_cf), 
+  lty = 1, lwd = 1.2
+)
+```
+
+
+### Maximum Likelihood Estimation
+
+```{r}
+# we will fit a model without covariates
+X <- matrix(1, length(ChicagoO3$y), 1)
+
+# y ~ beta0 + Z(s), where Z(s) is a Gaussian Process 
+(pars <- spam::mle(
+  # data & distance information
+  y, X, distmat, cov.sph, 
+  # initial values of optimization
+  beta0 = 0, theta0 = c(2, 2),
+  # Bounds (covariance parameters need to be positive)
+  thetalower = c(.01,.01), thetaupper = Inf)
+)
+```
+
+
+### What we derive:
+
+```{r}
+# estimated mean (beta0)
+pars$par[1]
+# compared to empirical mean 
+mean(y)
+```
+
+```{r}
+# estimated range
+pars$par[2]
+# is equal to the initial value. Probably too few observations to estimate.
+```
+
+```{r}
+# estimated variance
+pars$par[3]
+# compared to empirical variance
+var(y)
+
+# most of the variance can be explained by the spatial distribution
+pars$par[3]/var(y)
+```
+
+### Further Reading
+
+
+Please check out the vignette of the `gstat` package (`vignette("gstat", package = "gstat")`) for a further example. 
+
+
